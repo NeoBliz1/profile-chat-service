@@ -4,11 +4,12 @@ import (
 	"log"
 	"net/http"
 	"profile-chat-service/api"
+	"profile-chat-service/pkg"
 )
 
 func main() {
 	// 1. Verify config loads locally from your environment variables/system shell
-	_, err := api.LoadConfig()
+	_, err := pkg.LoadConfig()
 	if err != nil {
 		log.Fatalf("Failed to initialize system parameters: %v", err)
 	}

@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"profile-chat-service/pkg"
 	"strings"
 	"testing"
 
@@ -29,7 +30,7 @@ func TestHandler(t *testing.T) {
 
 	// Reload the configuration after setting environment variables for tests
 	// This ensures api.Cfg and api.ConfigErr reflect the test environment.
-	Cfg, ConfigErr = LoadConfig()
+	Cfg, ConfigErr = pkg.LoadConfig()
 
 	// Test case for /api/send
 	t.Run("SendRoute", func(t *testing.T) {

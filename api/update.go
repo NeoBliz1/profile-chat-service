@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/mail"
 	"net/textproto"
+	pkg2 "profile-chat-service/pkg"
 	"regexp"
 	"sort"
 	"strings"
@@ -19,7 +20,7 @@ import (
 var GetImapConnection = defaultGetImapConnection
 
 // defaultGetImapConnection establishes a real IMAP connection.
-func defaultGetImapConnection(cfg *Config) (TextprotoCommander, error) {
+func defaultGetImapConnection(cfg *pkg2.Config) (pkg2.TextprotoCommander, error) {
 	if cfg.MailEmail == "" || cfg.MailAppPassword == "" || cfg.IMAPHost == "" {
 		return nil, fmt.Errorf("missing IMAP login configurations")
 	}
@@ -33,7 +34,7 @@ func defaultGetImapConnection(cfg *Config) (TextprotoCommander, error) {
 	proto := textproto.NewConn(conn)
 	_, _, _ = proto.ReadResponse(-1) // Flush greeting line
 
-	if _, err := SendImapCommand(proto, "A1", fmt.Sprintf(`LOGIN "%s" "%s"`, cfg.MailEmail, cfg.MailAppPassword)); err != nil {
+	if _, err := pkg2.SendImapCommand(proto, "A1", fmt.Sprintf(`LOGIN "%s" "%s"`, cfg.MailEmail, cfg.MailAppPassword)); err != nil {
 		proto.Close()
 		return nil, fmt.Errorf("auth error: %w", err)
 	}
@@ -42,17 +43,17 @@ func defaultGetImapConnection(cfg *Config) (TextprotoCommander, error) {
 }
 
 // CheckReplyHandler manages incoming history synchronization validation queries via IMAP
-func CheckReplyHandler(w http.ResponseWriter, r *http.Request, cfg *Config) {
+func CheckReplyHandler(w http.ResponseWriter, r *http.Request, cfg *pkg2.Config) {
 	// Frontend polling script strictly leverages HTTP GET parameters
 	if r.Method != http.MethodGet {
-		WriteErrorResponse(w, http.StatusMethodNotAllowed, "Method not allowed")
+		pkg2.WriteErrorResponse(w, http.StatusMethodNotAllowed, "Method not allowed")
 		return
 	}
 
 	// 2. Parse and validate the incoming user identification token string
 	uuid := strings.TrimSpace(r.URL.Query().Get("uuid"))
 	if uuid == "" {
-		WriteErrorResponse(w, http.StatusBadRequest, "Missing required query parameter: uuid")
+		pkg2.WriteErrorResponse(w, http.StatusBadRequest, "Missing required query parameter: uuid")
 		return
 	}
 
@@ -60,12 +61,12 @@ func CheckReplyHandler(w http.ResponseWriter, r *http.Request, cfg *Config) {
 	// Establish IMAP connection
 	proto, err := GetImapConnection(cfg)
 	if err != nil {
-		WriteErrorResponse(w, http.StatusInternalServerError, "Failed to establish IMAP connection: "+err.Error())
+		pkg2.WriteErrorResponse(w, http.StatusInternalServerError, "Failed to establish IMAP connection: "+err.Error())
 		return
 	}
 	defer func() {
 		// Ensure logout and close are called on the concrete type if it's a *textproto.Conn
-		_, _ = SendImapCommand(proto, "A99", `LOGOUT`)
+		_, _ = pkg2.SendImapCommand(proto, "A99", `LOGOUT`)
 		if conn, ok := proto.(*textproto.Conn); ok {
 			conn.Close()
 		}
@@ -73,12 +74,12 @@ func CheckReplyHandler(w http.ResponseWriter, r *http.Request, cfg *Config) {
 
 	fullChain, err := GetAllEmailsChainByUuid(proto, uuid, cfg)
 	if err != nil {
-		WriteErrorResponse(w, http.StatusInternalServerError, "Mailbox extraction transaction failed: "+err.Error())
+		pkg2.WriteErrorResponse(w, http.StatusInternalServerError, "Mailbox extraction transaction failed: "+err.Error())
 		return
 	}
 
 	// 4. Always populate the payload wrapper with the complete conversational history
-	var responsePayload ChatHistoryResponse
+	var responsePayload pkg2.ChatHistoryResponse
 	responsePayload.History = fullChain
 
 	// 5. Deliver finalized response stream matching JSON data payload architectures
@@ -88,13 +89,13 @@ func CheckReplyHandler(w http.ResponseWriter, r *http.Request, cfg *Config) {
 }
 
 // FindEmailByUuid Check for single existence footprint (Used by MsgProxyResender to bypass captcha)
-func FindEmailByUuid(proto TextprotoCommander, uuid string) (bool, error) {
-	if _, err := SendImapCommand(proto, "A2", `SELECT INBOX`); err != nil {
+func FindEmailByUuid(proto pkg2.TextprotoCommander, uuid string) (bool, error) {
+	if _, err := pkg2.SendImapCommand(proto, "A2", `SELECT INBOX`); err != nil {
 		return false, fmt.Errorf("folder target error: %w", err)
 	}
 
 	// Let the helper collect the search response lines
-	lines, err := SendImapCommand(proto, "A3", fmt.Sprintf(`SEARCH SUBJECT "%s"`, uuid))
+	lines, err := pkg2.SendImapCommand(proto, "A3", fmt.Sprintf(`SEARCH SUBJECT "%s"`, uuid))
 	if err != nil {
 		return false, err
 	}
@@ -112,8 +113,8 @@ func FindEmailByUuid(proto TextprotoCommander, uuid string) (bool, error) {
 }
 
 // GetAllEmailsChainByUuid Scrape email contents and maps them straight to ChatMessage layout slices
-func GetAllEmailsChainByUuid(proto TextprotoCommander, uuid string, cfg *Config) ([]ChatMessage, error) {
-	messages := make([]ChatMessage, 0)
+func GetAllEmailsChainByUuid(proto pkg2.TextprotoCommander, uuid string, cfg *pkg2.Config) ([]pkg2.ChatMessage, error) {
+	messages := make([]pkg2.ChatMessage, 0)
 	txCounter := 0
 
 	dateRegex := regexp.MustCompile(`(?i)INTERNALDATE\s+"([^"]+)"`)
@@ -125,14 +126,14 @@ func GetAllEmailsChainByUuid(proto TextprotoCommander, uuid string, cfg *Config)
 
 	// 1. Shift context focus onto the designated folder channel
 	selectTag := fmt.Sprintf("S%d", txCounter)
-	if _, err := SendImapCommand(proto, selectTag, `SELECT "INBOX"`); err != nil {
+	if _, err := pkg2.SendImapCommand(proto, selectTag, `SELECT "INBOX"`); err != nil {
 		return nil, fmt.Errorf("failed to select INBOX: %w", err)
 	}
 	txCounter++
 
 	// 2. Scan folder headers for matching tracking token parameters
 	searchTag := fmt.Sprintf("H%d", txCounter)
-	searchLines, err := SendImapCommand(proto, searchTag, fmt.Sprintf(`SEARCH SUBJECT "%s"`, uuid))
+	searchLines, err := pkg2.SendImapCommand(proto, searchTag, fmt.Sprintf(`SEARCH SUBJECT "%s"`, uuid))
 	if err != nil {
 		return nil, fmt.Errorf("failed to search for emails: %w", err)
 	}
@@ -152,7 +153,7 @@ func GetAllEmailsChainByUuid(proto TextprotoCommander, uuid string, cfg *Config)
 	for _, msgID := range folderMessageIDs {
 		// First, check the current flags to see if the message is already read
 		flagsTag := fmt.Sprintf("FL%d", txCounter)
-		flagsLines, err := SendImapCommand(proto, flagsTag, fmt.Sprintf("FETCH %s (FLAGS)", msgID))
+		flagsLines, err := pkg2.SendImapCommand(proto, flagsTag, fmt.Sprintf("FETCH %s (FLAGS)", msgID))
 		if err != nil {
 			txCounter++
 			continue
@@ -170,7 +171,7 @@ func GetAllEmailsChainByUuid(proto TextprotoCommander, uuid string, cfg *Config)
 
 		// Now, fetch the full message body
 		fetchTag := fmt.Sprintf("F%d", txCounter)
-		bodyLines, err := SendImapCommand(proto, fetchTag, fmt.Sprintf(`FETCH %s (INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM TO SUBJECT)] RFC822.TEXT)`, msgID))
+		bodyLines, err := pkg2.SendImapCommand(proto, fetchTag, fmt.Sprintf(`FETCH %s (INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM TO SUBJECT)] RFC822.TEXT)`, msgID))
 		if err != nil {
 			txCounter++
 			continue
@@ -234,7 +235,7 @@ func GetAllEmailsChainByUuid(proto TextprotoCommander, uuid string, cfg *Config)
 		// If the message was originally unread, restore its unread status
 		if !wasSeen {
 			storeTag := fmt.Sprintf("ST%d", txCounter)
-			_, err := SendImapCommand(proto, storeTag, fmt.Sprintf("STORE %s -FLAGS.SILENT (\\Seen)", msgID))
+			_, err := pkg2.SendImapCommand(proto, storeTag, fmt.Sprintf("STORE %s -FLAGS.SILENT (\\Seen)", msgID))
 			if err != nil {
 				log.Printf("Warning: failed to restore unread flag for message %s: %v", msgID, err)
 			}
@@ -246,10 +247,10 @@ func GetAllEmailsChainByUuid(proto TextprotoCommander, uuid string, cfg *Config)
 
 		if strings.Contains(fullTextBody, "<b>To:</b>") {
 			parts := strings.SplitN(fullTextBody, "<b>To:</b>", 2)
-			finalContent = cleanReply(parts[0])
+			finalContent = pkg2.CleanReply(parts[0])
 		} else if strings.Contains(fullTextBody, "<blockquote") {
 			parts := strings.SplitN(fullTextBody, "<blockquote", 2)
-			finalContent = cleanReply(parts[0])
+			finalContent = pkg2.CleanReply(parts[0])
 		} else if strings.Contains(fullTextBody, "Message:") {
 			lines := strings.Split(fullTextBody, "\n")
 			var parts []string
@@ -291,7 +292,7 @@ func GetAllEmailsChainByUuid(proto TextprotoCommander, uuid string, cfg *Config)
 		}
 		// If neither of the above, default to innerUser (e.g., if To is not the app's email, or parsing errors)
 
-		messages = append(messages, ChatMessage{
+		messages = append(messages, pkg2.ChatMessage{
 			Sender:    sender,
 			Content:   finalContent,
 			Timestamp: parsedTime,
