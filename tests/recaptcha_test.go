@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"profile-chat-service/api"
+	"profile-chat-service/pkg"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -22,7 +23,7 @@ func TestVerifyRecaptcha(t *testing.T) {
 		}))
 		defer server.Close()
 
-		cfg := &api.Config{
+		cfg := &pkg.Config{
 			GCPProjectID: "test-project",
 			GCPAPIKey:    "test-api-key",
 			GCPSiteKey:   "test-site-key",
@@ -38,14 +39,14 @@ func TestVerifyRecaptcha(t *testing.T) {
 	})
 
 	t.Run("Missing Config", func(t *testing.T) {
-		cfg := &api.Config{}
+		cfg := &pkg.Config{}
 		_, err := api.VerifyRecaptcha(cfg, "any-token")
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "missing critical Google Cloud environment configurations")
 	})
 
 	t.Run("API Request Fails", func(t *testing.T) {
-		cfg := &api.Config{
+		cfg := &pkg.Config{
 			GCPProjectID: "test-project",
 			GCPAPIKey:    "test-api-key",
 			GCPSiteKey:   "test-site-key",
@@ -66,7 +67,7 @@ func TestVerifyRecaptcha(t *testing.T) {
 		}))
 		defer server.Close()
 
-		cfg := &api.Config{
+		cfg := &pkg.Config{
 			GCPProjectID: "test-project",
 			GCPAPIKey:    "test-api-key",
 			GCPSiteKey:   "test-site-key",
@@ -87,7 +88,7 @@ func TestVerifyRecaptcha(t *testing.T) {
 		}))
 		defer server.Close()
 
-		cfg := &api.Config{
+		cfg := &pkg.Config{
 			GCPProjectID: "test-project",
 			GCPAPIKey:    "test-api-key",
 			GCPSiteKey:   "test-site-key",

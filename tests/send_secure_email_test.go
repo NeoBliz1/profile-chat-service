@@ -5,13 +5,14 @@ import (
 	"fmt"
 	"net"
 	"profile-chat-service/api"
+	pkg2 "profile-chat-service/pkg"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 )
 
 func TestSendSecureEmail(t *testing.T) {
-	payload := &api.EmailPayload{
+	payload := &pkg2.EmailPayload{
 		Name:    "Test User",
 		Message: "Hello, this is a test.",
 		Uuid:    "test-uuid",
@@ -38,7 +39,7 @@ func TestSendSecureEmail(t *testing.T) {
 	})
 
 	t.Run("Missing Server Config", func(t *testing.T) {
-		err := api.SendSecureEmail(&api.Config{}, payload)
+		err := api.SendSecureEmail(&pkg2.Config{}, payload)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "server configuration missing backend variables")
 	})
@@ -134,8 +135,8 @@ func TestSendSecureEmail(t *testing.T) {
 	})
 }
 
-func config(host string, port string) *api.Config {
-	cfg := &api.Config{
+func config(host string, port string) *pkg2.Config {
+	cfg := &pkg2.Config{
 		MailEmail:       "test@example.com",
 		MailAppPassword: "password",
 		SMTPHost:        host,

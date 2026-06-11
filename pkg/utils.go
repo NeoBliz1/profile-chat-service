@@ -1,4 +1,4 @@
-package api
+package pkg
 
 import (
 	"encoding/json"
@@ -92,7 +92,7 @@ func SendImapCommand(proto TextprotoCommander, tag, command string) ([]string, e
 	}
 }
 
-func cleanReply(text string) string {
+func CleanReply(text string) string {
 	// Replace various forms of line breaks and special spaces with a single space
 	cleaned := strings.ReplaceAll(text, "<br />", " ")
 	cleaned = strings.ReplaceAll(cleaned, "<br>", " ")

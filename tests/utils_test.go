@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"profile-chat-service/api"
+	pkg2 "profile-chat-service/pkg"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -12,12 +12,12 @@ import (
 
 func TestWriteErrorResponse(t *testing.T) {
 	rr := httptest.NewRecorder()
-	api.WriteErrorResponse(rr, http.StatusBadRequest, "Test Error")
+	pkg2.WriteErrorResponse(rr, http.StatusBadRequest, "Test Error")
 
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
 	assert.Equal(t, "application/json", rr.Header().Get("Content-Type"))
 
-	var resp api.ErrorResponse
+	var resp pkg2.ErrorResponse
 	err := json.Unmarshal(rr.Body.Bytes(), &resp)
 	assert.NoError(t, err)
 	assert.Equal(t, "Test Error", resp.Error)
@@ -25,9 +25,9 @@ func TestWriteErrorResponse(t *testing.T) {
 
 func TestSetupCORS(t *testing.T) {
 	t.Run("CORS Origin Set", func(t *testing.T) {
-		cfg := &api.Config{OriginCORS: "http://localhost:3000"}
+		cfg := &pkg2.Config{OriginCORS: "http://localhost:3000"}
 		rr := httptest.NewRecorder()
-		err := api.SetupCORS(rr, cfg)
+		err := pkg2.SetupCORS(rr, cfg)
 
 		assert.NoError(t, err)
 		assert.Equal(t, "http://localhost:3000", rr.Header().Get("Access-Control-Allow-Origin"))
@@ -36,9 +36,9 @@ func TestSetupCORS(t *testing.T) {
 	})
 
 	t.Run("CORS Origin Not Set", func(t *testing.T) {
-		cfg := &api.Config{}
+		cfg := &pkg2.Config{}
 		rr := httptest.NewRecorder()
-		err := api.SetupCORS(rr, cfg)
+		err := pkg2.SetupCORS(rr, cfg)
 		assert.Error(t, err)
 	})
 }
@@ -46,34 +46,34 @@ func TestSetupCORS(t *testing.T) {
 func TestValidatePayload(t *testing.T) {
 	tests := []struct {
 		name          string
-		payload       *api.EmailPayload
+		payload       *pkg2.EmailPayload
 		expectedError string
 	}{
 		{
 			name:          "Valid Payload",
-			payload:       &api.EmailPayload{Name: "Test", Message: "Test Message", RecaptchaResponse: "token"},
+			payload:       &pkg2.EmailPayload{Name: "Test", Message: "Test Message", RecaptchaResponse: "token"},
 			expectedError: "",
 		},
 		{
 			name:          "Empty Name",
-			payload:       &api.EmailPayload{Name: " ", Message: "Test Message", RecaptchaResponse: "token"},
+			payload:       &pkg2.EmailPayload{Name: " ", Message: "Test Message", RecaptchaResponse: "token"},
 			expectedError: "Name and message fields cannot be empty",
 		},
 		{
 			name:          "Empty Message",
-			payload:       &api.EmailPayload{Name: "Test", Message: " ", RecaptchaResponse: "token"},
+			payload:       &pkg2.EmailPayload{Name: "Test", Message: " ", RecaptchaResponse: "token"},
 			expectedError: "Name and message fields cannot be empty",
 		},
 		{
 			name:          "Missing Token",
-			payload:       &api.EmailPayload{Name: "Test", Message: "Test Message"},
+			payload:       &pkg2.EmailPayload{Name: "Test", Message: "Test Message"},
 			expectedError: "Missing required reCAPTCHA or Uuid token verification parameter",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			errStr := api.ValidatePayload(tt.payload)
+			errStr := pkg2.ValidatePayload(tt.payload)
 			assert.Equal(t, tt.expectedError, errStr)
 		})
 	}
@@ -104,7 +104,7 @@ func TestSanitizeInput(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			sanitized := api.SanitizeInput(tt.input)
+			sanitized := pkg2.SanitizeInput(tt.input)
 			assert.Equal(t, tt.expected, sanitized)
 		})
 	}
@@ -126,7 +126,7 @@ func TestSendImapCommand(t *testing.T) {
 			lineIdx++
 			return line, nil
 		}
-		_, err := api.SendImapCommand(mockProto, "A1", "SEARCH")
+		_, err := pkg2.SendImapCommand(mockProto, "A1", "SEARCH")
 		assert.NoError(t, err)
 	})
 }

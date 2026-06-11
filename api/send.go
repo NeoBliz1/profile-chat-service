@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/smtp"
 	"net/textproto"
+	pkg2 "profile-chat-service/pkg"
 	"strings"
 	"time"
 )
@@ -19,20 +20,20 @@ var (
 	TlsDial         = tls.Dial
 )
 
-func MsgProxyResender(w http.ResponseWriter, r *http.Request, cfg *Config) {
+func MsgProxyResender(w http.ResponseWriter, r *http.Request, cfg *pkg2.Config) {
 	if r.Method != http.MethodPost {
-		WriteErrorResponse(w, http.StatusMethodNotAllowed, "Method not allowed")
+		pkg2.WriteErrorResponse(w, http.StatusMethodNotAllowed, "Method not allowed")
 		return
 	}
 
-	var payload EmailPayload
+	var payload pkg2.EmailPayload
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-		WriteErrorResponse(w, http.StatusBadRequest, "Malformed JSON payload")
+		pkg2.WriteErrorResponse(w, http.StatusBadRequest, "Malformed JSON payload")
 		return
 	}
 
-	if errStr := ValidatePayload(&payload); errStr != "" {
-		WriteErrorResponse(w, http.StatusUnprocessableEntity, errStr)
+	if errStr := pkg2.ValidatePayload(&payload); errStr != "" {
+		pkg2.WriteErrorResponse(w, http.StatusUnprocessableEntity, errStr)
 		return
 	}
 
@@ -42,11 +43,11 @@ func MsgProxyResender(w http.ResponseWriter, r *http.Request, cfg *Config) {
 	if cleanUUID != "" {
 		proto, err := GetImapConnection(cfg)
 		if err != nil {
-			WriteErrorResponse(w, http.StatusBadGateway, "Failed to establish IMAP connection: "+err.Error())
+			pkg2.WriteErrorResponse(w, http.StatusBadGateway, "Failed to establish IMAP connection: "+err.Error())
 			return
 		}
 		defer func() {
-			_, _ = SendImapCommand(proto, "A99", `LOGOUT`)
+			_, _ = pkg2.SendImapCommand(proto, "A99", `LOGOUT`)
 			if conn, ok := proto.(*textproto.Conn); ok {
 				conn.Close()
 			}
@@ -54,7 +55,7 @@ func MsgProxyResender(w http.ResponseWriter, r *http.Request, cfg *Config) {
 
 		alreadyEmailed, err := FindEmailByUuid(proto, cleanUUID)
 		if err != nil {
-			WriteErrorResponse(w, http.StatusBadGateway, "IMAP UUID check failed: "+err.Error())
+			pkg2.WriteErrorResponse(w, http.StatusBadGateway, "IMAP UUID check failed: "+err.Error())
 			return
 		}
 		if alreadyEmailed {
@@ -67,33 +68,33 @@ func MsgProxyResender(w http.ResponseWriter, r *http.Request, cfg *Config) {
 	} else {
 		valid, err := VerifyRecaptcha(cfg, payload.RecaptchaResponse)
 		if err != nil {
-			WriteErrorResponse(w, http.StatusForbidden, err.Error())
+			pkg2.WriteErrorResponse(w, http.StatusForbidden, err.Error())
 			return
 		} else if !valid {
-			WriteErrorResponse(w, http.StatusForbidden, "Bot verification failed or token has expired")
+			pkg2.WriteErrorResponse(w, http.StatusForbidden, "Bot verification failed or token has expired")
 			return
 		}
 	}
 
 	if err := SendSecureEmail(cfg, &payload); err != nil {
-		WriteErrorResponse(w, http.StatusBadGateway, err.Error())
+		pkg2.WriteErrorResponse(w, http.StatusBadGateway, err.Error())
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(SuccessResponse{Success: true})
+	_ = json.NewEncoder(w).Encode(pkg2.SuccessResponse{Success: true})
 }
 
 // VerifyRecaptcha creates an Enterprise assessment using Google Cloud platform project tokens
-func VerifyRecaptcha(cfg *Config, token string) (bool, error) {
+func VerifyRecaptcha(cfg *pkg2.Config, token string) (bool, error) {
 	if cfg.GCPProjectID == "" || cfg.GCPAPIKey == "" || cfg.GCPSiteKey == "" {
 		return false, fmt.Errorf("missing critical Google Cloud environment configurations")
 	}
 
 	apiURL := fmt.Sprintf(RecaptchaAPIURL, cfg.GCPProjectID, cfg.GCPAPIKey)
 
-	var reqBody AssessmentRequest
+	var reqBody pkg2.AssessmentRequest
 	reqBody.Event.Token = token
 	reqBody.Event.SiteKey = cfg.GCPSiteKey
 
@@ -113,7 +114,7 @@ func VerifyRecaptcha(cfg *Config, token string) (bool, error) {
 		return false, fmt.Errorf("google cloud assessment endpoint returned failure status: %d", resp.StatusCode)
 	}
 
-	var googleResult AssessmentResponse
+	var googleResult pkg2.AssessmentResponse
 	if err := json.NewDecoder(resp.Body).Decode(&googleResult); err != nil {
 		return false, fmt.Errorf("failed to decode Google JSON assessment response payload: %w", err)
 	}
@@ -122,7 +123,7 @@ func VerifyRecaptcha(cfg *Config, token string) (bool, error) {
 }
 
 // SendSecureEmail manages lower-level SMTP socket routing networks over strict implicit TLS
-func SendSecureEmail(cfg *Config, p *EmailPayload) error {
+func SendSecureEmail(cfg *pkg2.Config, p *pkg2.EmailPayload) error {
 	if cfg.MailEmail == "" || cfg.MailAppPassword == "" || cfg.SMTPHost == "" || cfg.SMTPPort == "" {
 		return fmt.Errorf("server configuration missing backend variables")
 	}

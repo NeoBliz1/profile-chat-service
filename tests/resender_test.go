@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/textproto"
 	"profile-chat-service/api"
+	pkg2 "profile-chat-service/pkg"
 	"strings"
 	"testing"
 
@@ -16,8 +17,8 @@ import (
 
 func TestMsgProxyResender(t *testing.T) {
 	// Common setup for tests
-	newTestConfig := func() *api.Config {
-		return &api.Config{
+	newTestConfig := func() *pkg2.Config {
+		return &pkg2.Config{
 			OriginCORS:      "http://localhost:3000",
 			GCPProjectID:    "test-project",
 			GCPAPIKey:       "test-api-key",
@@ -56,7 +57,7 @@ func TestMsgProxyResender(t *testing.T) {
 		}
 		defer func() { api.TlsDial = originalTlsDial }()
 
-		payload := api.EmailPayload{Name: "Test", Message: "Hello", RecaptchaResponse: "valid-token"}
+		payload := pkg2.EmailPayload{Name: "Test", Message: "Hello", RecaptchaResponse: "valid-token"}
 		body, _ := json.Marshal(payload)
 		req, _ := http.NewRequest("POST", "/api/send", bytes.NewBuffer(body))
 		rr := httptest.NewRecorder()
@@ -73,7 +74,7 @@ func TestMsgProxyResender(t *testing.T) {
 		originalGetImapConnection := api.GetImapConnection
 		defer func() { api.GetImapConnection = originalGetImapConnection }()
 
-		api.GetImapConnection = func(c *api.Config) (api.TextprotoCommander, error) {
+		api.GetImapConnection = func(c *pkg2.Config) (pkg2.TextprotoCommander, error) {
 			mockConn := &MockNetConn{}
 			mockConn.ReadBuffer.WriteString("* OK Mock IMAP Server Ready\r\n")
 			mockConn.ReadBuffer.WriteString("A1 OK LOGIN completed\r\n")
@@ -101,7 +102,7 @@ func TestMsgProxyResender(t *testing.T) {
 		}
 		defer func() { api.TlsDial = originalTlsDial }()
 
-		payload := api.EmailPayload{Name: "Test", Message: "Hello", Uuid: "test-uuid"}
+		payload := pkg2.EmailPayload{Name: "Test", Message: "Hello", Uuid: "test-uuid"}
 		body, _ := json.Marshal(payload)
 		req, _ := http.NewRequest("POST", "/api/send", bytes.NewBuffer(body))
 		rr := httptest.NewRecorder()
@@ -129,7 +130,7 @@ func TestMsgProxyResender(t *testing.T) {
 
 	t.Run("Invalid Payload", func(t *testing.T) {
 		cfg := newTestConfig()
-		payload := api.EmailPayload{Name: "", Message: "Hello"} // Missing name
+		payload := pkg2.EmailPayload{Name: "", Message: "Hello"} // Missing name
 		body, _ := json.Marshal(payload)
 		req, _ := http.NewRequest("POST", "/api/send", bytes.NewBuffer(body))
 		rr := httptest.NewRecorder()
@@ -148,7 +149,7 @@ func TestMsgProxyResender(t *testing.T) {
 		api.RecaptchaAPIURL = recaptchaServer.URL + "/?p=%s&k=%s" // Consume the extra args
 		defer func() { api.RecaptchaAPIURL = originalURL }()
 
-		payload := api.EmailPayload{Name: "Test", Message: "Hello", RecaptchaResponse: "invalid-token"}
+		payload := pkg2.EmailPayload{Name: "Test", Message: "Hello", RecaptchaResponse: "invalid-token"}
 		body, _ := json.Marshal(payload)
 		req, _ := http.NewRequest("POST", "/api/send", bytes.NewBuffer(body))
 		rr := httptest.NewRecorder()
@@ -172,7 +173,7 @@ func TestMsgProxyResender(t *testing.T) {
 		cfg.SMTPHost = "127.0.0.1"
 		cfg.SMTPPort = "1" // Invalid port
 
-		payload := api.EmailPayload{Name: "Test", Message: "Hello", RecaptchaResponse: "valid-token"}
+		payload := pkg2.EmailPayload{Name: "Test", Message: "Hello", RecaptchaResponse: "valid-token"}
 		body, _ := json.Marshal(payload)
 		req, _ := http.NewRequest("POST", "/api/send", bytes.NewBuffer(body))
 		rr := httptest.NewRecorder()

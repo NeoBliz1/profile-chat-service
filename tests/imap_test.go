@@ -3,6 +3,7 @@ package tests
 import (
 	"fmt"
 	"profile-chat-service/api"
+	"profile-chat-service/pkg"
 	"sync"
 	"testing"
 
@@ -110,7 +111,7 @@ func TestFindEmailByUuid(t *testing.T) {
 }
 
 func TestGetAllEmailsChainByUuid(t *testing.T) {
-	cfg := &api.Config{MailEmail: "app@example.com"}
+	cfg := &pkg.Config{MailEmail: "app@example.com"}
 
 	t.Run("Differentiates Sender by Subject", func(t *testing.T) {
 		mockProto := &MockTextprotoCommander{}
