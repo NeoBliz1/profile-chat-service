@@ -20,16 +20,6 @@ var (
 )
 
 func MsgProxyResender(w http.ResponseWriter, r *http.Request, cfg *Config) {
-	if err := SetupCORS(w, cfg); err != nil {
-		WriteErrorResponse(w, http.StatusBadGateway, err.Error())
-		return
-	}
-
-	if r.Method == http.MethodOptions {
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-
 	if r.Method != http.MethodPost {
 		WriteErrorResponse(w, http.StatusMethodNotAllowed, "Method not allowed")
 		return

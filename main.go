@@ -6,34 +6,19 @@ import (
 	"profile-chat-service/api"
 )
 
-// App holds the application's dependencies.
-type App struct {
-	Config *api.Config
-}
-
 func main() {
-	cfg, err := api.LoadConfig()
+	// 1. Verify config loads locally from your environment variables/system shell
+	_, err := api.LoadConfig()
 	if err != nil {
-		log.Fatalf("Failed to load configuration: %v", err)
+		log.Fatalf("Failed to initialize system parameters: %v", err)
 	}
 
-	app := &App{Config: cfg}
+	// 2. Pass ALL traffic directly to your Vercel Entry Point Handler
+	// This runs SetupCORS and checks OPTIONS automatically for all routes!
+	http.HandleFunc("/api/", api.Handler)
 
-	http.HandleFunc("/api/send", app.MsgProxyResender)
-	http.HandleFunc("/api/check", app.CheckReplyHandler)
-
-	log.Println("Server starting on port 8080...")
+	log.Println("Server starting on secure local port 8080...")
 	if err := http.ListenAndServe(":8080", nil); err != nil {
-		log.Fatalf("Failed to start server: %v", err)
+		log.Fatalf("Critical server engine crash: %v", err)
 	}
-}
-
-// MsgProxyResender is the handler for the /api/send endpoint.
-func (app *App) MsgProxyResender(w http.ResponseWriter, r *http.Request) {
-	api.MsgProxyResender(w, r, app.Config)
-}
-
-// CheckReplyHandler is the handler for the /api/check endpoint.
-func (app *App) CheckReplyHandler(w http.ResponseWriter, r *http.Request) {
-	api.CheckReplyHandler(w, r, app.Config)
 }

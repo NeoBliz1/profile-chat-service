@@ -111,14 +111,6 @@ func TestMsgProxyResender(t *testing.T) {
 		assert.Equal(t, http.StatusOK, rr.Code)
 	})
 
-	t.Run("CORS Preflight", func(t *testing.T) {
-		cfg := newTestConfig()
-		req, _ := http.NewRequest("OPTIONS", "/api/send", nil)
-		rr := httptest.NewRecorder()
-		api.MsgProxyResender(rr, req, cfg)
-		assert.Equal(t, http.StatusOK, rr.Code)
-	})
-
 	t.Run("Invalid Method", func(t *testing.T) {
 		cfg := newTestConfig()
 		req, _ := http.NewRequest("GET", "/api/send", nil)
