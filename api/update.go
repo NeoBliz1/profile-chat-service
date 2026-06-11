@@ -43,18 +43,6 @@ func defaultGetImapConnection(cfg *Config) (TextprotoCommander, error) {
 
 // CheckReplyHandler manages incoming history synchronization validation queries via IMAP
 func CheckReplyHandler(w http.ResponseWriter, r *http.Request, cfg *Config) {
-	// 1. Establish strict origin security boundaries via CORS
-	if err := SetupCORS(w, cfg); err != nil {
-		WriteErrorResponse(w, http.StatusBadGateway, err.Error())
-		return
-	}
-
-	// Intercept standard preflight validation options natively
-	if r.Method == http.MethodOptions {
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-
 	// Frontend polling script strictly leverages HTTP GET parameters
 	if r.Method != http.MethodGet {
 		WriteErrorResponse(w, http.StatusMethodNotAllowed, "Method not allowed")
