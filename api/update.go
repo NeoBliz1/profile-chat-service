@@ -277,7 +277,7 @@ func fetchAndProcessMessage(proto pkg2.TextprotoCommander, msgID string, txCount
 		}
 	}
 
-	// Now, fetch the full message body
+	// Fetch the full message body
 	fetchTag := fmt.Sprintf("F%d", *txCounter)
 	bodyLines, err := pkg2.SendImapCommand(proto, fetchTag, fmt.Sprintf(`FETCH %s (INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM TO SUBJECT)] RFC822.TEXT)`, msgID))
 	if err != nil {

@@ -8,13 +8,13 @@ import (
 )
 
 func main() {
-	// 1. Verify config loads locally from your environment variables/system shell
+	// 1. Verify config loads locally from environment variables/system shell
 	_, err := pkg.LoadConfig()
 	if err != nil {
 		log.Fatalf("Failed to initialize system parameters: %v", err)
 	}
 
-	// 2. Pass ALL traffic directly to your Vercel Entry Point Handler
+	// 2. Pass ALL traffic directly to Vercel Entry Point Handler
 	// This runs SetupCORS and checks OPTIONS automatically for all routes!
 	http.HandleFunc("/api/", api.Handler)
 
