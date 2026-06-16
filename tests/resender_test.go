@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/tls"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/textproto"
@@ -11,9 +12,48 @@ import (
 	pkg2 "profile-chat-service/pkg"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
+
+// MockNetConn implements the net.Conn interface for testing purposes.
+type MockNetConn struct {
+	ReadBuffer  bytes.Buffer
+	WriteBuffer bytes.Buffer
+}
+
+func (m *MockNetConn) Read(b []byte) (n int, err error) {
+	return m.ReadBuffer.Read(b)
+}
+
+func (m *MockNetConn) Write(b []byte) (n int, err error) {
+	return m.WriteBuffer.Write(b)
+}
+
+func (m *MockNetConn) Close() error {
+	return nil
+}
+
+func (m *MockNetConn) LocalAddr() net.Addr {
+	return &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 12345}
+}
+
+func (m *MockNetConn) RemoteAddr() net.Addr {
+	return &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 54321}
+}
+
+func (m *MockNetConn) SetDeadline(t time.Time) error {
+	return nil
+}
+
+func (m *MockNetConn) SetReadDeadline(t time.Time) error {
+	return nil
+}
+
+func (m *MockNetConn) SetWriteDeadline(t time.Time) error {
+	return nil
+}
 
 func TestMsgProxyResender(t *testing.T) {
 	// Common setup for tests
