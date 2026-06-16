@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"mime"
 	"net/http"
-	"net/mail"
 	"net/textproto"
 	pkg2 "profile-chat-service/pkg"
 	"regexp"
@@ -72,7 +72,7 @@ func CheckReplyHandler(w http.ResponseWriter, r *http.Request, cfg *pkg2.Config)
 		}
 	}()
 
-	fullChain, err := GetAllEmailsChainByUuid(proto, uuid, cfg)
+	fullChain, err := GetAllEmailsChainByUuid(proto, uuid)
 	if err != nil {
 		pkg2.WriteErrorResponse(w, http.StatusInternalServerError, "Mailbox extraction transaction failed: "+err.Error())
 		return
@@ -112,32 +112,24 @@ func FindEmailByUuid(proto pkg2.TextprotoCommander, uuid string) (bool, error) {
 	return false, nil
 }
 
-// GetAllEmailsChainByUuid Scrape email contents and maps them straight to ChatMessage layout slices
-func GetAllEmailsChainByUuid(proto pkg2.TextprotoCommander, uuid string, cfg *pkg2.Config) ([]pkg2.ChatMessage, error) {
-	messages := make([]pkg2.ChatMessage, 0)
-	txCounter := 0
-
-	dateRegex := regexp.MustCompile(`(?i)INTERNALDATE\s+"([^"]+)"`)
-	fromRegex := regexp.MustCompile(`(?i)From:\s*(.+)`)
-	toRegex := regexp.MustCompile(`(?i)To:\s*(.+)`)
-	subjectRegex := regexp.MustCompile(`(?i)Subject:\s*(.+)`)
-	rfcTextRegex := regexp.MustCompile(`RFC822.TEXT\s*\{[0-9]+\}`)
-	flagsRegex := regexp.MustCompile(`(?i)FLAGS \(([^)]+)\)`)
-
-	// 1. Shift context focus onto the designated folder channel
-	selectTag := fmt.Sprintf("S%d", txCounter)
+// selectImapInbox selects the "INBOX" folder.
+func selectImapInbox(proto pkg2.TextprotoCommander, txCounter *int) error {
+	selectTag := fmt.Sprintf("S%d", *txCounter)
 	if _, err := pkg2.SendImapCommand(proto, selectTag, `SELECT "INBOX"`); err != nil {
-		return nil, fmt.Errorf("failed to select INBOX: %w", err)
+		return fmt.Errorf("failed to select INBOX: %w", err)
 	}
-	txCounter++
+	*txCounter++
+	return nil
+}
 
-	// 2. Scan folder headers for matching tracking token parameters
-	searchTag := fmt.Sprintf("H%d", txCounter)
+// searchEmailsByUuid searches for emails with a subject matching the UUID and returns their message IDs.
+func searchEmailsByUuid(proto pkg2.TextprotoCommander, uuid string, txCounter *int) ([]string, error) {
+	searchTag := fmt.Sprintf("H%d", *txCounter)
 	searchLines, err := pkg2.SendImapCommand(proto, searchTag, fmt.Sprintf(`SEARCH SUBJECT "%s"`, uuid))
 	if err != nil {
 		return nil, fmt.Errorf("failed to search for emails: %w", err)
 	}
-	txCounter++
+	*txCounter++
 
 	var folderMessageIDs []string
 	for _, line := range searchLines {
@@ -148,155 +140,198 @@ func GetAllEmailsChainByUuid(proto pkg2.TextprotoCommander, uuid string, cfg *pk
 			}
 		}
 	}
+	return folderMessageIDs, nil
+}
 
-	// 3. Loop and pull multi-line properties for the resulting local keys
-	for _, msgID := range folderMessageIDs {
-		// First, check the current flags to see if the message is already read
-		flagsTag := fmt.Sprintf("FL%d", txCounter)
-		flagsLines, err := pkg2.SendImapCommand(proto, flagsTag, fmt.Sprintf("FETCH %s (FLAGS)", msgID))
-		if err != nil {
-			txCounter++
-			continue
-		}
-		txCounter++
+// parseEmailHeaders extracts the internal date and subject from the fetched email lines.
+func parseEmailHeaders(bodyLines []string) (time.Time, string) {
+	dateRegex := regexp.MustCompile(`(?i)INTERNALDATE\s+"([^"]+)"`)
+	subjectRegex := regexp.MustCompile(`(?i)Subject:\s*(.+)`)
 
-		var wasSeen bool
-		for _, line := range flagsLines {
-			if matches := flagsRegex.FindStringSubmatch(line); len(matches) > 1 {
-				if strings.Contains(strings.ToUpper(matches[1]), "\\SEEN") {
-					wasSeen = true
+	var parsedTime = time.Now()
+	var subjectHeader string
+	isReadingHeader := false
+
+	for _, line := range bodyLines {
+		if strings.HasPrefix(line, "* ") && strings.Contains(line, "FETCH") {
+			if matches := dateRegex.FindStringSubmatch(line); len(matches) > 1 {
+				if t, errParse := time.Parse("02-Jan-2006 15:04:05 -0700", matches[1]); errParse == nil {
+					parsedTime = t
 				}
 			}
-		}
-
-		// Now, fetch the full message body
-		fetchTag := fmt.Sprintf("F%d", txCounter)
-		bodyLines, err := pkg2.SendImapCommand(proto, fetchTag, fmt.Sprintf(`FETCH %s (INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM TO SUBJECT)] RFC822.TEXT)`, msgID))
-		if err != nil {
-			txCounter++
+			isReadingHeader = true
 			continue
 		}
-		txCounter++
 
-		var cleanTextLines []string
-		var parsedTime = time.Now()
-		var fromHeader, toHeader, subjectHeader string
-		isReadingBody := false
-		isReadingHeader := false
-
-		for _, line := range bodyLines {
-			if strings.HasPrefix(line, "* ") && strings.Contains(line, "FETCH") {
-				if matches := dateRegex.FindStringSubmatch(line); len(matches) > 1 {
-					if t, errParse := time.Parse("02-Jan-2006 15:04:05 -0700", matches[1]); errParse == nil {
-						parsedTime = t
-					}
+		if isReadingHeader {
+			if subjectMatches := subjectRegex.FindStringSubmatch(line); len(subjectMatches) > 1 {
+				rawSub := subjectMatches[1]
+				if decodedSub, err := (&mime.WordDecoder{}).DecodeHeader(rawSub); err == nil {
+					subjectHeader = decodedSub
+				} else {
+					subjectHeader = rawSub
 				}
-				isReadingHeader = true
+			}
+			if line == "" { // End of headers
+				break
+			}
+		}
+	}
+	return parsedTime, subjectHeader
+}
+
+// extractEmailBody extracts the raw text body from the fetched email lines.
+func extractEmailBody(bodyLines []string) string {
+	rfcTextRegex := regexp.MustCompile(`RFC822.TEXT\s*\{[0-9]+\}`)
+	flagsRegex := regexp.MustCompile(`(?i)FLAGS \(([^)]+)\)`)
+
+	var cleanTextLines []string
+	isReadingBody := false
+	isReadingHeader := false // To skip header lines
+
+	for _, line := range bodyLines {
+		if strings.HasPrefix(line, "* ") && strings.Contains(line, "FETCH") {
+			isReadingHeader = true
+			continue
+		}
+		if isReadingHeader {
+			if line == "" { // End of headers, start of body
+				isReadingHeader = false
+				isReadingBody = true
 				continue
 			}
+			continue // Still in headers
+		}
 
-			if isReadingHeader {
-				if fromMatches := fromRegex.FindStringSubmatch(line); len(fromMatches) > 1 {
-					fromHeader = fromMatches[1]
-				} else if toMatches := toRegex.FindStringSubmatch(line); len(toMatches) > 1 {
-					toHeader = toMatches[1]
-				} else if subjectMatches := subjectRegex.FindStringSubmatch(line); len(subjectMatches) > 1 {
-					subjectHeader = subjectMatches[1]
-				}
-
-				if line == "" {
-					isReadingHeader = false
-					isReadingBody = true
-					continue
-				}
-			}
-
-			if line == ")" && isReadingBody {
+		if isReadingBody {
+			if line == ")" { // End of body fetch
 				isReadingBody = false
 				continue
 			}
-			if isReadingBody {
-				if rfcTextRegex.MatchString(line) {
-					loc := rfcTextRegex.FindStringIndex(line)
-					contentOnLine := line[loc[1]:]
-					if strings.TrimSpace(contentOnLine) != "" {
-						cleanTextLines = append(cleanTextLines, contentOnLine)
-					}
-					continue
+			if rfcTextRegex.MatchString(line) {
+				loc := rfcTextRegex.FindStringIndex(line)
+				contentOnLine := line[loc[1]:]
+				if strings.TrimSpace(contentOnLine) != "" {
+					cleanTextLines = append(cleanTextLines, contentOnLine)
 				}
-				if strings.Contains(line, " FLAGS (") {
-					parts := strings.SplitN(line, " FLAGS (", 2)
-					line = parts[0]
-				}
-				cleanTextLines = append(cleanTextLines, line)
+				continue
 			}
-		}
-
-		// If the message was originally unread, restore its unread status
-		if !wasSeen {
-			storeTag := fmt.Sprintf("ST%d", txCounter)
-			_, err := pkg2.SendImapCommand(proto, storeTag, fmt.Sprintf("STORE %s -FLAGS.SILENT (\\Seen)", msgID))
-			if err != nil {
-				log.Printf("Warning: failed to restore unread flag for message %s: %v", msgID, err)
+			if flagsRegex.MatchString(line) { // Remove FLAGS part if present in body line
+				parts := strings.SplitN(line, " FLAGS (", 2)
+				line = parts[0]
 			}
-			txCounter++
+			cleanTextLines = append(cleanTextLines, line)
 		}
+	}
+	return strings.Join(cleanTextLines, "\n")
+}
 
-		fullTextBody := strings.Join(cleanTextLines, "\n")
-		var finalContent = strings.TrimSpace(fullTextBody)
+// cleanMessageContent cleans the extracted email content.
+func cleanMessageContent(fullTextBody string) string {
+	var finalContent = strings.TrimSpace(fullTextBody)
 
-		if strings.Contains(fullTextBody, "<b>To:</b>") {
-			parts := strings.SplitN(fullTextBody, "<b>To:</b>", 2)
+	if strings.Contains(fullTextBody, "<b>To:</b>") {
+		parts := strings.SplitN(fullTextBody, "<b>To:</b>", 2)
+		finalContent = pkg2.CleanReply(parts[0])
+	} else if strings.Contains(fullTextBody, "<blockquote") {
+		parts := strings.SplitN(fullTextBody, "<blockquote", 2)
+		finalContent = pkg2.CleanReply(parts[0])
+	} else if strings.Contains(fullTextBody, "Message:") {
+		parts := strings.SplitN(fullTextBody, "Message:", 2)
+		if len(parts) > 1 {
+			finalContent = strings.TrimSpace(parts[1])
+		} else {
 			finalContent = pkg2.CleanReply(parts[0])
-		} else if strings.Contains(fullTextBody, "<blockquote") {
-			parts := strings.SplitN(fullTextBody, "<blockquote", 2)
-			finalContent = pkg2.CleanReply(parts[0])
-		} else if strings.Contains(fullTextBody, "Message:") {
-			lines := strings.Split(fullTextBody, "\n")
-			var parts []string
-			capture := false
-			for _, l := range lines {
-				lTrim := strings.TrimSpace(l)
-				if strings.HasPrefix(lTrim, "Message:") {
-					capture = true
-					continue
-				}
-				if capture && lTrim != "" {
-					parts = append(parts, lTrim)
-				}
-			}
-			if len(parts) > 0 {
-				finalContent = strings.Join(parts, " ")
+		}
+	}
+	return finalContent
+}
+
+// determineSender determines the sender based on the subject header.
+func determineSender(subjectHeader string) string {
+	if strings.HasPrefix(strings.ToLower(subjectHeader), "re:") {
+		return "innerUser" // It's a reply from the user
+	}
+	return "outerUser" // It's an initial message from the app
+}
+
+// fetchAndProcessMessage fetches and processes a single email message.
+func fetchAndProcessMessage(proto pkg2.TextprotoCommander, msgID string, txCounter *int) (pkg2.ChatMessage, error) {
+	flagsRegex := regexp.MustCompile(`(?i)FLAGS \(([^)]+)\)`)
+
+	// First, check the current flags to see if the message is already read
+	flagsTag := fmt.Sprintf("FL%d", *txCounter)
+	flagsLines, err := pkg2.SendImapCommand(proto, flagsTag, fmt.Sprintf("FETCH %s (FLAGS)", msgID))
+	if err != nil {
+		*txCounter++
+		return pkg2.ChatMessage{}, fmt.Errorf("failed to fetch flags for message %s: %w", msgID, err)
+	}
+	*txCounter++
+
+	var wasSeen bool
+	for _, line := range flagsLines {
+		if matches := flagsRegex.FindStringSubmatch(line); len(matches) > 1 {
+			if strings.Contains(strings.ToUpper(matches[1]), "\\SEEN") {
+				wasSeen = true
 			}
 		}
+	}
 
-		sender := "innerUser" // Default to innerUser
+	// Now, fetch the full message body
+	fetchTag := fmt.Sprintf("F%d", *txCounter)
+	bodyLines, err := pkg2.SendImapCommand(proto, fetchTag, fmt.Sprintf(`FETCH %s (INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM TO SUBJECT)] RFC822.TEXT)`, msgID))
+	if err != nil {
+		*txCounter++
+		return pkg2.ChatMessage{}, fmt.Errorf("failed to fetch body for message %s: %w", msgID, err)
+	}
+	*txCounter++
 
-		fromAddr, fromErr := mail.ParseAddress(fromHeader)
-		toAddr, toErr := mail.ParseAddress(toHeader)
+	parsedTime, subjectHeader := parseEmailHeaders(bodyLines)
+	fullTextBody := extractEmailBody(bodyLines)
+	finalContent := cleanMessageContent(fullTextBody)
+	sender := determineSender(subjectHeader)
 
-		isFromApp := fromErr == nil && strings.EqualFold(fromAddr.Address, cfg.MailEmail)
-		isToApp := toErr == nil && strings.EqualFold(toAddr.Address, cfg.MailEmail)
-		isReplySubject := strings.HasPrefix(strings.ToLower(subjectHeader), "re:")
-
-		if isFromApp && isToApp {
-			// Both From and To are the app's email. Differentiate by subject.
-			if isReplySubject {
-				sender = "innerUser" // It's a reply from the user
-			} else {
-				sender = "outerUser" // It's an initial message from the app
-			}
-		} else if !isFromApp && isToApp {
-			// From is different, To is app's email. This is a standard reply from a user.
-			sender = "innerUser"
+	// If the message was originally unread, restore its unread status
+	if !wasSeen {
+		storeTag := fmt.Sprintf("ST%d", *txCounter)
+		_, err := pkg2.SendImapCommand(proto, storeTag, fmt.Sprintf("STORE %s -FLAGS.SILENT (\\Seen)", msgID))
+		if err != nil {
+			log.Printf("Warning: failed to restore unread flag for message %s: %v", msgID, err)
 		}
-		// If neither of the above, default to innerUser (e.g., if To is not the app's email, or parsing errors)
+		*txCounter++
+	}
 
-		messages = append(messages, pkg2.ChatMessage{
-			Sender:    sender,
-			Content:   finalContent,
-			Timestamp: parsedTime,
-		})
+	return pkg2.ChatMessage{
+		Sender:    sender,
+		Content:   finalContent,
+		Timestamp: parsedTime,
+	}, nil
+}
+
+// GetAllEmailsChainByUuid Scrape email contents and maps them straight to ChatMessage layout slices
+func GetAllEmailsChainByUuid(proto pkg2.TextprotoCommander, uuid string) ([]pkg2.ChatMessage, error) {
+	messages := make([]pkg2.ChatMessage, 0)
+	txCounter := 0
+
+	// 1. Shift context focus onto the designated folder channel
+	if err := selectImapInbox(proto, &txCounter); err != nil {
+		return nil, err
+	}
+
+	// 2. Scan folder headers for matching tracking token parameters
+	folderMessageIDs, err := searchEmailsByUuid(proto, uuid, &txCounter)
+	if err != nil {
+		return nil, err
+	}
+
+	// 3. Loop and pull multi-line properties for the resulting local keys
+	for _, msgID := range folderMessageIDs {
+		chatMessage, err := fetchAndProcessMessage(proto, msgID, &txCounter)
+		if err != nil {
+			log.Printf("Error processing message %s: %v", msgID, err)
+			continue // Continue to the next message even if one fails
+		}
+		messages = append(messages, chatMessage)
 	}
 
 	// 4. Chronological Sorting Block: Arranges cross-folder messages seamlessly by true date
