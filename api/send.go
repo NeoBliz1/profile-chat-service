@@ -138,7 +138,7 @@ func SendSecureEmail(cfg *pkg2.Config, p *pkg2.EmailPayload) error {
 	// 3. Assemble headers using the encoded subject line
 	fromHeader := fmt.Sprintf("From: %s\r\n", cfg.MailEmail)
 	toHeader := fmt.Sprintf("To: %s\r\n", cfg.MailEmail)
-	subjectHeader := fmt.Sprintf("Subject: %s\r\n", encodedSubject) // 👈 Use encoded string here
+	subjectHeader := fmt.Sprintf("Subject: %s\r\n", encodedSubject)
 	replyToHeader := fmt.Sprintf("Reply-To: %s\r\n", cfg.MailEmail)
 
 	// 4. Declare Content-Type for the body text to support Russian characters inside the message body
