@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -128,13 +129,24 @@ func SendSecureEmail(cfg *pkg2.Config, p *pkg2.EmailPayload) error {
 		return fmt.Errorf("server configuration missing backend variables")
 	}
 
+	// 1. Build dynamic string with Cyrillic characters
+	rawSubject := fmt.Sprintf("New Profile Site Submission from %s - Session UUID: %s", p.Name, p.Uuid)
+
+	// 2. Encode the subject using RFC 2047 standard for UTF-8 Base64
+	encodedSubject := fmt.Sprintf("=?UTF-8?B?%s?=", base64.StdEncoding.EncodeToString([]byte(rawSubject)))
+
+	// 3. Assemble headers using the encoded subject line
 	fromHeader := fmt.Sprintf("From: %s\r\n", cfg.MailEmail)
 	toHeader := fmt.Sprintf("To: %s\r\n", cfg.MailEmail)
-	subject := fmt.Sprintf("Subject: New Profile Site Submission from %s - Session UUID: %s\r\n", p.Name, p.Uuid)
-	replyTo := fmt.Sprintf("Reply-To: %s\r\n", cfg.MailEmail)
+	subjectHeader := fmt.Sprintf("Subject: %s\r\n", encodedSubject)
+	replyToHeader := fmt.Sprintf("Reply-To: %s\r\n", cfg.MailEmail)
+
+	// 4. Declare Content-Type for the body text to support Russian characters inside the message body
+	contentTypeHeader := "Content-Type: text/plain; charset=UTF-8\r\n"
+
 	body := fmt.Sprintf("\r\nMessage:\r\n%s", p.Message)
 
-	msg := []byte(fromHeader + toHeader + subject + replyTo + body)
+	msg := []byte(fromHeader + toHeader + subjectHeader + replyToHeader + contentTypeHeader + body)
 
 	tlsConfig := &tls.Config{
 		InsecureSkipVerify: false,

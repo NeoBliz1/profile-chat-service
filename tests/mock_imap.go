@@ -1,199 +1,49 @@
 package tests
 
 import (
-	"bufio"
-	"bytes"
 	"fmt"
-	"net"
-	"strings"
 	"sync"
-	"time"
 )
 
-// MockNetConn implements net.Conn for testing purposes.
-type MockNetConn struct {
-	ReadBuffer  bytes.Buffer
-	WriteBuffer bytes.Buffer
-	CloseCalled bool
-	Local       net.Addr
-	Remote      net.Addr
+// MockTextprotoCommander provides a mock implementation of the TextprotoCommander interface for testing.
+type MockTextprotoCommander struct {
+	CmdFunc         func(format string, args ...interface{}) (uint, error)
+	ReadLineFunc    func() (string, error)
+	StartResponseMu sync.Mutex
+	EndResponseMu   sync.Mutex
+	CloseCalled     bool
+	Commands        []string
 }
 
-func (m *MockNetConn) Read(b []byte) (n int, err error) {
-	return m.ReadBuffer.Read(b)
+func (m *MockTextprotoCommander) Cmd(format string, args ...interface{}) (uint, error) {
+	m.Commands = append(m.Commands, fmt.Sprintf(format, args...))
+	if m.CmdFunc != nil {
+		return m.CmdFunc(format, args...)
+	}
+	return 1, nil // Default command ID
 }
 
-func (m *MockNetConn) Write(b []byte) (n int, err error) {
-	return m.WriteBuffer.Write(b)
+func (m *MockTextprotoCommander) StartResponse(_ uint) {
+	m.StartResponseMu.Lock()
+	defer m.StartResponseMu.Unlock()
+	// No-op for mock
 }
 
-func (m *MockNetConn) Close() error {
+func (m *MockTextprotoCommander) EndResponse(_ uint) {
+	m.EndResponseMu.Lock()
+	defer m.EndResponseMu.Unlock()
+	// No-op for mock
+}
+
+func (m *MockTextprotoCommander) ReadLine() (string, error) {
+	if m.ReadLineFunc != nil {
+		return m.ReadLineFunc()
+	}
+	return "", nil // Default empty line
+}
+
+// Close method for MockTextprotoCommander to satisfy the *textproto.Conn type assertion in api/update.go
+func (m *MockTextprotoCommander) Close() error {
 	m.CloseCalled = true
 	return nil
-}
-
-func (m *MockNetConn) LocalAddr() net.Addr {
-	if m.Local == nil {
-		return &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 12345}
-	}
-	return m.Local
-}
-
-func (m *MockNetConn) RemoteAddr() net.Addr {
-	if m.Remote == nil {
-		return &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 54321}
-	}
-	return m.Remote
-}
-
-func (m *MockNetConn) SetDeadline(t time.Time) error {
-	return nil
-}
-
-func (m *MockNetConn) SetReadDeadline(t time.Time) error {
-	return nil
-}
-
-func (m *MockNetConn) SetWriteDeadline(t time.Time) error {
-	return nil
-}
-
-// MockIMAPServer is a mock IMAP server for testing.
-type MockIMAPServer struct {
-	Addr     string
-	listener net.Listener
-	wg       sync.WaitGroup
-	mu       sync.Mutex
-
-	// Handlers for different IMAP commands
-	LoginHandler  func(username, password string) error
-	SelectHandler func(mailbox string) error
-	SearchHandler func(criteria string) ([]string, error)
-	FetchHandler  func(sequenceSet, item string) ([]string, error)
-	LogoutHandler func() error
-
-	// Controls for forcing errors
-	ForceDisconnectAfter string
-}
-
-// NewMockIMAPServer creates a new mock IMAP server.
-func NewMockIMAPServer() (*MockIMAPServer, error) {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return nil, fmt.Errorf("could not listen on a port: %w", err)
-	}
-	s := &MockIMAPServer{
-		Addr:     l.Addr().String(),
-		listener: l,
-	}
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-		s.serve()
-	}()
-	return s, nil
-}
-
-// Close stops the mock server.
-func (s *MockIMAPServer) Close() {
-	s.listener.Close()
-	s.wg.Wait()
-}
-
-func (s *MockIMAPServer) serve() {
-	conn, err := s.listener.Accept()
-	if err != nil {
-		return // Server closed
-	}
-	defer conn.Close()
-	s.handleConnection(conn)
-}
-
-func (s *MockIMAPServer) handleConnection(conn net.Conn) {
-	reader := bufio.NewReader(conn)
-	writer := bufio.NewWriter(conn)
-
-	// Greet the client
-	write(writer, "* OK Mock IMAP Server Ready")
-
-	for {
-		line, err := reader.ReadString('\n')
-		if err != nil {
-			return
-		}
-		line = strings.TrimSpace(line)
-		parts := strings.Fields(line)
-		if len(parts) < 2 {
-			continue
-		}
-		tag, command := parts[0], strings.ToUpper(parts[1])
-
-		s.mu.Lock()
-		forceDisconnect := s.ForceDisconnectAfter == command
-		s.mu.Unlock()
-		if forceDisconnect {
-			conn.Close()
-			return
-		}
-
-		switch command {
-		case "LOGIN":
-			if s.LoginHandler != nil {
-				if err := s.LoginHandler("", ""); err != nil {
-					write(writer, fmt.Sprintf("%s NO %s", tag, err.Error()))
-					continue
-				}
-			}
-			write(writer, fmt.Sprintf("%s OK LOGIN completed", tag))
-		case "SELECT":
-			mailbox := ""
-			if len(parts) > 2 {
-				mailbox = parts[2]
-			}
-			if s.SelectHandler != nil {
-				if err := s.SelectHandler(mailbox); err != nil {
-					write(writer, fmt.Sprintf("%s NO %s", tag, err.Error()))
-					continue
-				}
-			}
-			write(writer, "* 1 EXISTS")
-			write(writer, fmt.Sprintf("%s OK [READ-WRITE] SELECT completed", tag))
-		case "SEARCH":
-			criteria := ""
-			if len(parts) > 2 {
-				criteria = strings.Join(parts[2:], " ")
-			}
-			if s.SearchHandler != nil {
-				results, err := s.SearchHandler(criteria)
-				if err != nil {
-					write(writer, fmt.Sprintf("%s NO %s", tag, err.Error()))
-					continue
-				}
-				write(writer, fmt.Sprintf("* SEARCH %s", strings.Join(results, " ")))
-			}
-			write(writer, fmt.Sprintf("%s OK SEARCH completed", tag))
-		case "FETCH":
-			sequenceSet, item := parts[2], parts[3]
-			if s.FetchHandler != nil {
-				lines, err := s.FetchHandler(sequenceSet, item)
-				if err != nil {
-					write(writer, fmt.Sprintf("%s NO %s", tag, err.Error()))
-					continue
-				}
-				for _, l := range lines {
-					write(writer, l)
-				}
-			}
-			write(writer, fmt.Sprintf("%s OK FETCH completed", tag))
-		case "LOGOUT":
-			if s.LogoutHandler != nil {
-				_ = s.LogoutHandler()
-			}
-			write(writer, "* BYE IMAP server shutting down")
-			write(writer, fmt.Sprintf("%s OK LOGOUT completed", tag))
-			return
-		default:
-			write(writer, fmt.Sprintf("%s BAD Unrecognized command", tag))
-		}
-	}
 }
